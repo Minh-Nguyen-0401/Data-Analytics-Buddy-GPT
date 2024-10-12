@@ -92,10 +92,13 @@ def main():
     # Read csv file 
     if uploaded_file is not None:
         st.session_state.df = pd.read_csv(uploaded_file)
+    
+    if st.session_state.get('df') is not None:
         st.write(f"### Your uploaded data:",st.session_state.df.head())
 
+    
     # Create data analysis agent to query with data
-    if uploaded_file is not None and st.session_state.get('df') is not None:
+
         da_agent = create_pandas_dataframe_agent(llm=llm, 
                                                 df=st.session_state.df,
                                                 agent_type="tool-calling",
