@@ -5,16 +5,19 @@ from dotenv import load_dotenv
 
 from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent 
 from langchain_openai import ChatOpenAI
+from langchain.memory import ConversationBufferMemory
 
 from src.logger.base import BaseLogger
 from src.models.llm import load_llm
 
 from src.utils import execute_plt
 
+import re
+
 #load env vars
 load_dotenv()
 logger = BaseLogger()
-MODEL_NAME = "gpt-3.5-turbo"
+MODEL_NAME = "gpt-4o"
 
 
 def process_query(da_agent,query):
@@ -25,7 +28,24 @@ def process_query(da_agent,query):
         if "plt" in action:
             st.write(response["output"])
 
-            fig = execute_plt(action, df=st.session_state.df)
+            # Extract the variable name used by the agent
+            var_name = re.search(r'df_(\w+)', action).group(1) if 'df_' in action else 'df'
+
+            # Check if the variable name is defined in the session state
+            if var_name in st.session_state:
+                df_to_use = st.session_state[var_name]
+            else:
+                # If not, try to find the variable name in the action string
+                match = re.search(r'(\w+)\.plot', action)
+                if match:
+                    var_name = match.group(1)
+                    df_to_use = st.session_state[var_name]
+                else:
+                    # If still not found, raise an error
+                    raise ValueError(f"Variable '{var_name}' not found in session state")
+
+            # Use the extracted variable name to access the modified DataFrame
+            fig = execute_plt(action, df=df_to_use)
             if fig:
                 st.pyplot(fig)
 
@@ -96,7 +116,10 @@ def main():
     if st.session_state.get('df') is not None:
         st.write(f"### Your uploaded data:",st.session_state.df.head())
 
-    
+        memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True)
+
     # Create data analysis agent to query with data
 
         da_agent = create_pandas_dataframe_agent(llm=llm, 
@@ -104,8 +127,11 @@ def main():
                                                 agent_type="tool-calling",
                                                 allow_dangerous_code = True,
                                                 verbose = True,
-                                                return_intermediate_steps = True)
+                                                return_intermediate_steps = True
+                                                )
         logger.info(f"### Successfully loaded data analysis agent. ###")
+
+        da_agent.memory = memory
 
         # Input query and process query
         query = st.text_input("Enter your question here:")
