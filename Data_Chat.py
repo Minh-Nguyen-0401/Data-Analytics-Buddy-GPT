@@ -20,7 +20,7 @@ logger = BaseLogger()
 MODEL_NAME = "gpt-4o"
 
 
-def process_query(da_agent,query):
+def process_query(da_agent, query):
     response = da_agent(query)
     try:
         action = response["intermediate_steps"][-1][0].tool_input["query"]
@@ -28,51 +28,67 @@ def process_query(da_agent,query):
         if "plt" in action:
             st.write(response["output"])
 
-            # Extract the variable name used by the agent
-            var_name = re.search(r'df_(\w+)', action).group(1) if 'df_' in action else 'df'
-
-            # Check if the variable name is defined in the session state
-            if var_name in st.session_state:
-                df_to_use = st.session_state[var_name]
+            # Extract the DataFrame variable name from the action string
+            var_name = None
+            if 'df_' in action:
+                var_name_match = re.search(r'df_(\w+)', action)  # Look for variables like df_xyz
+                if var_name_match:
+                    var_name = var_name_match.group(0)
             else:
-                # If not, try to find the variable name in the action string
-                match = re.search(r'(\w+)\.plot', action)
+                match = re.search(r'(\w+)\.plot', action)  # Look for df.plot
                 if match:
                     var_name = match.group(1)
-                    df_to_use = st.session_state[var_name]
-                else:
-                    # If still not found, raise an error
-                    raise ValueError(f"Variable '{var_name}' not found in session state")
 
-            # Use the extracted variable name to access the modified DataFrame
-            fig = execute_plt(action, df=df_to_use)
-            if fig:
-                st.pyplot(fig)
+            # Default to 'df' if no specific variable name is found
+            if not var_name:
+                var_name = 'df'
 
-            st.write("**`Executed Code`**")
-            st.code(action)
+            # Retrieve the DataFrame from session state
+            df_to_use = None  # Ensure df_to_use is initialized
+            if var_name in st.session_state:
+                df_to_use = st.session_state[var_name]
+            elif "df" not in var_name:
+                df_to_use = st.session_state.get("df", None)  # Default to "df" if available
+                if df_to_use is None:
+                    raise ValueError("No default DataFrame ('df') is available in session state.")
+            else:
+                raise ValueError(f"Variable '{var_name}' not found in session state. Please check your action string.")
 
-            display_string = response["output"] + "\n\n**`Executed Code`**\n" + action + "\n"
-            st.session_state.history.append((query, display_string))
-        
+            # Generate the plot using the selected DataFrame
+            figure = execute_plt(action, df_to_use)
+
+            # Render the figures in Streamlit
+            if figure:
+                st.pyplot(figure)
+            else:
+                st.error("No figures were generated.")
+
+            # Append the query, response, and executed action to session history
+            if "history" not in st.session_state:
+                st.session_state.history = []  # Initialize session history if not present
+            st.session_state.history.append((query, response["output"], action))
         else:
             st.write(response["output"])
+            if "history" not in st.session_state:
+                st.session_state.history = []  # Initialize session history if not present
             st.session_state.history.append((query, response["output"]))
 
     except Exception as e:
-        # If Indexerror then this is an irrelevant question
+        # Handle specific exceptions like IndexError
         if isinstance(e, IndexError):
-            st.error(e)
-            st.write("<p style='color:red; font-style:italic'>This question is irrelevant to the dataset")
+            st.error("This question may be irrelevant to the dataset.")
             st.write(response["output"])
         else:
-            st.error(e)
+            st.error(f"Error: {e}")
 
 def display_chat_history():
     st.markdown("### Chat History")
-    for i, (query, response) in enumerate(st.session_state.history):
+    for i, (query, response, exe_code) in enumerate(st.session_state.history):
         st.markdown(f"**Query {i + 1}:** {query}")
         st.markdown(f"**Response {i + 1}:** {response}")
+        if exe_code:
+            st.markdown(f"**Execution Code {i + 1}:**")
+            st.code(exe_code, language="python")
         st.markdown("---")
 
 def main():
@@ -118,7 +134,9 @@ def main():
 
         memory = ConversationBufferMemory(
             memory_key="chat_history",
-            return_messages=True)
+            return_messages=True,
+            output_key="output"
+        )
 
     # Create data analysis agent to query with data
 
